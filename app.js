@@ -650,7 +650,6 @@ function vistaInicio() {
   const prox = st.partidos.find((p) => !yaPaso(p));
   const cumple = st.amigos.filter((a) => a.cumple_mes).map((a) => ({ a, d: diasHastaCumple(a) })).sort((x, y) => x.d - y.d)[0];
   const lider = calcularRanking(hoy.slice(0, 4)).tabla[0];
-  const fotos = st.recuerdos.slice(0, 4);
   const cuando = (d) => (d === 0 ? "¡Hoy!" : d === 1 ? "Mañana" : `En ${d} días`);
 
   const mesHoy = Number(hoy.slice(5, 7));
@@ -712,11 +711,7 @@ function vistaInicio() {
         : `<p class="vacio">${st.esAdmin ? "Publica avisos, fotos del grupo o lo que quieras." : "Todavía no hay publicaciones."}</p>`}
     </section>
 
-    ${tarjetaChismes()}
-    ${fotos.length ? `<section class="tarjeta">
-      <div class="mesNav"><h2>📸 Momentos</h2><button class="enlace" data-tab-ir="recuerdos">Ver todos</button></div>
-      <div class="galeria cuatro">${fotos.map((r) => `<button class="foto mini" data-id="${r.id}"><img loading="lazy" src="${esc(st.urls[r.ruta] || "")}" alt=""></button>`).join("")}</div>
-    </section>` : ""}`;
+    ${tarjetaChismes()}`;
 }
 
 async function subirImagen(file, carpeta, max = 1600) {

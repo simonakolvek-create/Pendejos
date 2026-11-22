@@ -1,5 +1,5 @@
 // Service worker: permite instalar la app, abrirla rápido y recibir notificaciones.
-const VERSION = "pendejos-v23";
+const VERSION = "pendejos-v24";
 const ARCHIVOS = [
   "./", "index.html", "styles.css", "app.js", "config.js", "manifest.webmanifest",
   "icons/p-192.png", "icons/p-512.png",
