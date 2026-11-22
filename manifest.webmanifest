@@ -1,0 +1,16 @@
+{
+  "name": "Pendejos",
+  "short_name": "Pendejos",
+  "description": "Partidos, ganadores, recuerdos y cumpleaños del grupo de pádel",
+  "lang": "es",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#faf9f5",
+  "theme_color": "#141413",
+  "icons": [
+    { "src": "icons/p-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/p-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/p-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
