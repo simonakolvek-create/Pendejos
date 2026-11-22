@@ -2246,7 +2246,7 @@ function tarjetaPregunta() {
     for (const v of votos) cuenta[v.votado] = (cuenta[v.votado] || 0) + 1;
     const filas = Object.entries(cuenta).sort((a, b) => b[1] - a[1]);
     const max = filas[0]?.[1] || 1;
-    cuerpo = `${filas.map(([id, n], i) => `<div class="barra ${i === 0 ? "top" : ""}"><span>${i === 0 ? "👑 " : ""}${esc(nombre(id))}</span><i style="width:${Math.round((n / max) * 100)}%"></i><b>${n}</b></div>`).join("")}
+    cuerpo = `${filas.map(([id, n], i) => `<div class="voto ${i === 0 ? "top" : ""}"><span>${i === 0 ? "👑 " : ""}${esc(nombre(id))}</span><i style="width:${Math.round((n / max) * 100)}%"></i><b>${n}</b></div>`).join("")}
       <small class="sub">${votos.length} de ${st.amigos.length} han votado · tú votaste por ${esc(nombre(mio.votado))} · <button class="enlace mini" data-cambiarpregunta="1">cambiar</button></small>`;
   }
   return `<section class="tarjeta pregunta"><small class="etq">🤔 PREGUNTA DEL DÍA</small><h3>${esc(texto)}</h3>${cuerpo}</section>`;

@@ -415,10 +415,10 @@ body.enChat main { padding-bottom: calc(env(safe-area-inset-bottom) + 150px); }
 /* ---------- Pregunta del día ---------- */
 .pregunta .etq { color: var(--naranja-osc); font-weight: 700; letter-spacing: .05em; font-size: .7rem; }
 .pregunta h3 { font-size: 1.1rem; margin: 4px 0 10px; }
-.barra { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; margin-bottom: 5px; border-radius: 10px; background: var(--fondo); overflow: hidden; font-size: .9rem; }
-.barra i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--naranja-claro); z-index: 0; }
-.barra.top i { background: #f6c9b6; }
-.barra span, .barra b { position: relative; z-index: 1; }
+.voto { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; margin-bottom: 5px; border-radius: 10px; background: var(--fondo); overflow: hidden; font-size: .9rem; }
+.voto i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--naranja-claro); z-index: 0; }
+.voto.top i { background: #f6c9b6; }
+.voto span, .barra b { position: relative; z-index: 1; }
 
 /* ---------- Chismes ---------- */
 .chisme { background: var(--fondo); border-radius: 12px; padding: 10px 12px; margin-bottom: 6px; font-style: italic; }
