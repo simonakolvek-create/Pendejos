@@ -2276,10 +2276,10 @@ async function votarPregunta(id) {
 // ---------- Buzón de chismes anónimos ----------
 function tarjetaChismes() {
   const publicados = st.chismes.filter((c) => c.publicado);
-  const ultimos = publicados.slice(0, 2);
+  const ultimos = publicados.slice(0, 3);
   return `<section class="tarjeta chismes">
     <div class="mesNav"><h2>🤫 Chismes</h2><button class="btn primario chico" data-chismes="1">Ver todos</button></div>
-    <p class="sub" style="margin-top:-6px">Anónimos. Se publican todos juntos el viernes a las 20:00.${st.chismesPendientes ? ` <b>${st.chismesPendientes} esperando…</b> 👀` : ""}</p>
+    <p class="sub" style="margin-top:-6px">100% anónimos. Salen al instante y a todos les llega la notificación 👀</p>
     ${ultimos.map((c) => `<div class="chisme">“${esc(c.texto)}”</div>`).join("")}
     <form id="fChisme" class="comForm"><input name="texto" maxlength="500" placeholder="Suelta tu chisme anónimo…" autocomplete="off"><button class="btn negro chico">Enviar</button></form>
   </section>`;
@@ -2293,8 +2293,8 @@ function enlazarChismes(raiz = document) {
     if (!texto) return;
     const { error: e } = await sb.from("chismes").insert({ texto });
     if (e) return error(e);
-    f.reset(); toast("🤫 Chisme enviado. Nadie sabrá que fuiste tú.");
-    st.chismesPendientes++; pintar();
+    f.reset(); toast("🤫 ¡Chisme publicado! Nadie sabrá que fuiste tú.");
+    cargarTodo();
   };
 }
 function verChismes() {
