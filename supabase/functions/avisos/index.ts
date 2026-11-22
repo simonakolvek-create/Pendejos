@@ -23,7 +23,7 @@ const fechaMadrid = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "E
 const DIAS = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
 const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 
-type Msg = { title: string; body: string; tag: string; cat?: string; url?: string; excluir?: string | null };
+type Msg = { title: string; body: string; tag: string; cat?: string; url?: string; excluir?: string | null; solo?: string | null };
 const TIPOS: Record<string, [string, string]> = {
   padel: ["🎾", "Pádel"], cena: ["🍽️", "Cena"], plan: ["🍻", "Plan"], viaje: ["✈️", "Viaje"], fiesta: ["🎉", "Fiesta"], otro: ["📌", "Plan"],
 };
@@ -53,7 +53,10 @@ async function construir(modo: string, extra: any = {}): Promise<Msg[]> {
   };
   const m: Msg[] = [];
 
-  if (modo === "chismes") {
+  if (modo === "directo") {
+    const destino = amigos?.find((a) => a.id === extra.para);
+    if (destino?.usuario) m.push({ title: String(extra.titulo || "Pendejos").slice(0, 80), body: String(extra.mensaje || "").slice(0, 200), tag: `dir-${Date.now()}`, url: "./#ranking", solo: destino.usuario });
+  } else if (modo === "chismes") {
     const { count } = await sb.from("chismes").select("id", { count: "exact", head: true }).eq("publicado", true).gte("creado_en", new Date(Date.now() - 8 * 864e5).toISOString());
     if (count) m.push({ title: "🤫 ¡Ya salieron los chismes de la semana!", body: `${count} chisme${count === 1 ? "" : "s"} anónimo${count === 1 ? "" : "s"}. Entra a leerlos 👀`, tag: "chismes", cat: "chismes" });
   } else if (modo === "chat") {
@@ -130,7 +133,7 @@ Deno.serve(async (req) => {
 
     // ¿Quién llama? La tarea programada (con token) o la admin desde la app (solo prueba)
     let permitido = req.headers.get("x-token") === c.TOKEN_CRON;
-    if (!permitido && (modo === "prueba" || modo === "personalizado")) {
+    if (!permitido && (modo === "prueba" || modo === "personalizado" || modo === "chismes")) {
       const jwt = (req.headers.get("authorization") || "").replace("Bearer ", "");
       const { data: u } = await sb.auth.getUser(jwt);
       if (u?.user) {
@@ -150,7 +153,8 @@ Deno.serve(async (req) => {
     let enviados = 0;
     for (const s of subs || []) {
       for (const msg of mensajes as any[]) {
-        if (msg.excluir && s.usuario === msg.excluir) continue; // no avisar a quien lo escribió
+        if (msg.excluir && s.usuario === msg.excluir) continue;
+        if (msg.solo && s.usuario !== msg.solo) continue; // solo para esa persona
         if (msg.cat && prefDe(s.usuario)[msg.cat] === false) continue; // lo silenció
         try {
           await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify({ title: msg.title, body: msg.body, tag: msg.tag, url: msg.url }));

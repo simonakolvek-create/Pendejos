@@ -36,6 +36,9 @@ const st = {
   chismesPendientes: 0,
   puntuaciones: [],
   ajustes: [],
+  liga: [],
+  retos: [],
+  trivia: [],
   adviento: [],
   intercambio: [],
   deseos: [],
@@ -114,6 +117,7 @@ function arrancarSesion() {
   else st.mes = [hoy.getFullYear(), hoy.getMonth()];
   st.dia = clave === mesClave(...st.mes) ? hoyISO() : iso(new Date(st.mes[0], st.mes[1], 1));
   if (location.hash === "#chat") st.tab = "chat";
+  if (location.hash === "#ranking") st.tab = "ranking";
   pintarEstructura();
   cargarTodo().then(conectarChat);
 }
@@ -174,6 +178,15 @@ async function cargarTodo() {
     st.chismesPendientes = cp.error ? 0 : cp.data || 0;
     st.puntuaciones = pu.error ? [] : pu.data;
     st.ajustes = aj.error ? [] : aj.data;
+    const [lg, rt, tv] = await Promise.all([
+      sb.from("liga_partidas").select("*").gte("fecha", iso(new Date(Date.now() - 40 * 864e5))),
+      sb.from("liga_retos").select("*").gte("creado_en", new Date(Date.now() - 14 * 864e5).toISOString()).order("creado_en", { ascending: false }),
+      sb.from("trivia").select("pregunta, opciones, correcta"),
+    ]);
+    st.ligaLista = !lg.error;
+    st.liga = lg.error ? [] : lg.data;
+    st.retos = rt.error ? [] : rt.data;
+    st.trivia = tv.error ? [] : tv.data;
     const yo = st.amigos.find((x) => x.usuario && x.usuario === st.usuario.id);
     st.yo = yo?.id || null;
     st.esAdmin = !!yo?.es_admin;
@@ -659,6 +672,7 @@ function vistaInicio() {
 
     ${C.grupoWhatsApp ? `<a class="btn wa ancho irGrupo" href="${esc(C.grupoWhatsApp)}" target="_blank" rel="noopener">💬 Ir al grupo de WhatsApp</a>` : ""}
     ${tarjetaProximoPadel()}
+    ${tarjetaLiga()}
     ${tarjetaNavidad()}
     <div class="fraseDia"><small>✨ FRASE DEL DÍA</small><p>${esc(fraseDelDia())}</p></div>
     ${tarjetaPregunta()}
@@ -1656,7 +1670,7 @@ document.addEventListener("change", (e) => {
 
 // ---------- Clics globales ----------
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-reac],[data-coment],[data-rsvp],[data-mvp],[data-resumen],[data-jugadores],[data-wa],[data-intercambio],[data-adviento],[data-agendarpadel],[data-album],[data-pregunta],[data-cambiarpregunta],[data-chismes],[data-jugar],[data-perfil]");
+  const t = e.target.closest("[data-reac],[data-coment],[data-rsvp],[data-mvp],[data-resumen],[data-jugadores],[data-wa],[data-intercambio],[data-adviento],[data-agendarpadel],[data-album],[data-pregunta],[data-cambiarpregunta],[data-chismes],[data-jugar],[data-perfil],[data-reto],[data-retar],[data-ligatab],[data-editarmeta]");
   if (!t) return;
   if (t.dataset.reac) { const [tipo, id, em] = t.dataset.reac.split("|"); toggleReaccion(tipo, id, em); }
   else if (t.dataset.coment) { const [tipo, id] = t.dataset.coment.split("|"); verComentarios(tipo, id); }
@@ -1673,6 +1687,10 @@ document.addEventListener("click", (e) => {
   else if (t.dataset.cambiarpregunta) { st.votosPregunta = st.votosPregunta.filter((v) => !(v.fecha === hoyISO() && v.votante === st.yo)); pintar(); }
   else if (t.dataset.chismes) verChismes();
   else if (t.dataset.jugar) abrirJuego();
+  else if (t.dataset.reto) { const r = st.retos.find((x) => x.id === t.dataset.reto); if (r) abrirJuego(r.juego, r); }
+  else if (t.dataset.retar) { const [j, p] = t.dataset.retar.split("|"); elegirRetado(j, Number(p)); }
+  else if (t.dataset.ligatab) { st.ligaTab = t.dataset.ligatab; pintar(); }
+  else if (t.dataset.editarmeta) editarMeta();
   else if (t.dataset.perfil) verPerfil(t.dataset.perfil);
 });
 
@@ -2311,68 +2329,265 @@ function verChismes() {
   });
 }
 
-// ---------- Mini juego: "Pared" (pádel contra la pared) ----------
-function recordsJuego() {
-  const mejor = {};
-  for (const p of st.puntuaciones) if (!mejor[p.amigo_id] || p.puntos > mejor[p.amigo_id]) mejor[p.amigo_id] = p.puntos;
-  return Object.entries(mejor).sort((a, b) => b[1] - a[1]);
+// =============================================================
+//  🏟️ LA LIGA PENDEJA — reto del día, rankings, retos 1 vs 1 y meta del grupo
+// =============================================================
+const JUEGOS = {
+  bola: { n: "⚡ ¡Bola!", u: "pts", d: "5 rondas. Toca la pelota en cuanto aparezca… pero si tocas antes de tiempo, pierdes la ronda 😅", est: (p) => (p >= 3200 ? 3 : p >= 2600 ? 2 : 1) },
+  trivia: { n: "🧠 Trivia", u: "pts", d: "5 preguntas de cultura general con 10 segundos cada una. Entre más rápido contestes, más puntos.", est: (p) => (p >= 700 ? 3 : p >= 400 ? 2 : 1) },
+  pared: { n: "🎾 La Pared", u: "golpes", d: "Mueve la pala con el dedo y no dejes caer la pelota. Cada vez va más rápido 🔥", est: (p) => (p >= 20 ? 3 : p >= 10 ? 2 : 1) },
+};
+const ORDEN_JUEGOS = ["bola", "trivia", "pared"];
+const PUNTOS_LUGAR = [10, 7, 5, 3, 2, 1, 1, 1, 1];
+const fmt = (n) => Number(n).toLocaleString("es-MX");
+
+function juegoDeHoy() {
+  const [y, m, d] = hoyISO().split("-").map(Number);
+  return ORDEN_JUEGOS[Math.floor(Date.UTC(y, m - 1, d) / 864e5) % ORDEN_JUEGOS.length];
 }
-function seccionJuego() {
-  const top = recordsJuego();
-  const mio = top.find(([id]) => id === st.yo);
-  return `<section class="tarjeta juegoCard">
-    <div class="mesNav"><h2>🎮 Pádel contra la pared</h2><button class="btn primario" data-jugar="1">▶ Jugar</button></div>
-    <p class="sub" style="margin-top:-6px">Mueve la pala con el dedo y no dejes caer la pelota. ¡A ver quién tiene el récord del grupo!</p>
-    ${top.length ? `<table class="tabla"><tbody>${top.slice(0, 7).map(([id, pts], i) => `<tr><td>${["🥇", "🥈", "🥉"][i] || i + 1 + "."}</td><td>${esc(nombre(id))}${id === st.yo ? ` <span class="tu">Tú</span>` : ""}</td><td><b>${pts}</b> golpes</td></tr>`).join("")}</tbody></table>`
-      : `<p class="vacio">Nadie ha jugado todavía. ¡Pon el primer récord! 🏆</p>`}
-    ${mio ? `<small class="sub">Tu récord: ${mio[1]} golpes</small>` : ""}
+function lunesISO() {
+  const d = new Date();
+  return iso(new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7)));
+}
+const misIntentos = () => st.liga.filter((x) => x.fecha === hoyISO() && x.amigo_id === st.yo).length;
+
+// Mejor marca de cada quien en un día → [[amigo, puntos, estrellas], ...] ordenado
+function rankingDia(fecha) {
+  const mejor = {};
+  for (const x of st.liga) if (x.fecha === fecha && (!mejor[x.amigo_id] || x.puntos > mejor[x.amigo_id].puntos)) mejor[x.amigo_id] = x;
+  return Object.values(mejor).sort((a, b) => b.puntos - a.puntos).map((x) => [x.amigo_id, x.puntos, x.estrellas]);
+}
+// Puntos de liga por lugar de cada día, desde una fecha
+function rankingPeriodo(desde) {
+  const tot = {};
+  const fechas = [...new Set(st.liga.filter((x) => x.fecha >= desde).map((x) => x.fecha))];
+  for (const f of fechas) rankingDia(f).forEach(([id], i) => {
+    tot[id] ||= { pts: 0, oros: 0 };
+    tot[id].pts += PUNTOS_LUGAR[i] ?? 1;
+    if (i === 0) tot[id].oros++;
+  });
+  return Object.entries(tot).sort((a, b) => b[1].pts - a[1].pts || b[1].oros - a[1].oros);
+}
+const estrellasSemana = () => st.liga.filter((x) => x.fecha >= lunesISO()).reduce((s, x) => s + (x.estrellas || 1), 0);
+const retosParaMi = () => st.retos.filter((r) => r.para === st.yo && r.estado === "pendiente" && new Date(r.vence) > new Date());
+const horasRestan = (r) => Math.max(1, Math.ceil((new Date(r.vence) - Date.now()) / 36e5));
+const medalla = (i) => ["🥇", "🥈", "🥉"][i] || `${i + 1}.`;
+
+// ---------- Tarjeta en Inicio ----------
+function tarjetaLiga() {
+  if (!st.ligaLista) return "";
+  const j = JUEGOS[juegoDeHoy()];
+  const rk = rankingDia(hoyISO());
+  const yo = rk.findIndex(([id]) => id === st.yo);
+  const quedan = 3 - misIntentos();
+  const retos = retosParaMi();
+  return `<section class="ligaHome">
+    <small>🏟️ RETO DE HOY · LA LIGA PENDEJA</small>
+    <div class="ligaFila">
+      <div>
+        <b class="ligaJuego">${j.n}</b>
+        <span class="ligaInfo">${rk.length ? `👑 ${esc(nombre(rk[0][0]))} · ${fmt(rk[0][1])} ${j.u}${yo > 0 ? ` · Tú vas ${yo + 1}º` : yo === 0 ? " · ¡Eres tú! 😎" : ""}` : "Nadie ha jugado hoy. ¡Pon la marca! 🏆"}</span>
+      </div>
+      <button class="btn primario" data-jugar="1" ${quedan ? "" : "disabled"}>${quedan ? `▶ Jugar` : "Mañana más"}</button>
+    </div>
+    <small class="ligaIntentos">${quedan ? `Te quedan ${quedan} de 3 intentos` : "Ya usaste tus 3 intentos de hoy"} · ⭐ Meta del grupo: ${estrellasSemana()}/${metaLiga()}</small>
+    ${retos.map((r) => `<button class="retoAviso" data-reto="${r.id}">⚔️ <b>${esc(nombre(r.de))}</b> te retó en ${JUEGOS[r.juego].n}: ${fmt(r.puntos_de)} · quedan ${horasRestan(r)} h <span>Aceptar →</span></button>`).join("")}
+  </section>`;
+}
+const metaLiga = () => Number(ajuste("meta_liga")) || 50;
+
+// ---------- Sección en la pestaña Pádel ----------
+function seccionLiga() {
+  if (!st.ligaLista) return "";
+  const hoy = hoyISO();
+  const clave = juegoDeHoy();
+  const j = JUEGOS[clave];
+  const quedan = 3 - misIntentos();
+  const tab = st.ligaTab || "hoy";
+  let tabla = "";
+  if (tab === "hoy") {
+    const rk = rankingDia(hoy);
+    tabla = rk.length ? rk.map(([id, pts, e], i) => `<tr${id === st.yo ? ` class="yo"` : ""}><td>${medalla(i)}</td><td>${esc(nombre(id))}</td><td><b>${fmt(pts)}</b> <small>${j.u}</small></td><td>${"⭐".repeat(e)}</td></tr>`).join("")
+      : `<tr><td colspan="4" class="vacio">Nadie ha jugado hoy todavía 👀</td></tr>`;
+  } else {
+    const desde = tab === "semana" ? lunesISO() : hoy.slice(0, 8) + "01";
+    const rk = rankingPeriodo(desde);
+    tabla = rk.length ? rk.map(([id, v], i) => `<tr${id === st.yo ? ` class="yo"` : ""}><td>${medalla(i)}</td><td>${esc(nombre(id))}</td><td><b>${v.pts}</b> <small>pts</small></td><td>${v.oros ? `👑×${v.oros}` : ""}</td></tr>`).join("")
+      : `<tr><td colspan="4" class="vacio">Todavía no hay partidas ${tab === "semana" ? "esta semana" : "este mes"}</td></tr>`;
+  }
+  const est = estrellasSemana(), meta = metaLiga();
+  const pct = Math.min(100, Math.round((est / meta) * 100));
+  const paraMi = retosParaMi();
+  const misEnviados = st.retos.filter((r) => r.de === st.yo && r.estado === "pendiente" && new Date(r.vence) > new Date());
+  const cerrados = st.retos.filter((r) => r.estado !== "pendiente").slice(0, 4);
+  const miMejor = rankingDia(hoy).find(([id]) => id === st.yo);
+  return `<section class="tarjeta liga">
+    <div class="mesNav"><h2>🏟️ La Liga Pendeja</h2></div>
+    <div class="ligaHoy">
+      <small>RETO DE HOY</small>
+      <b>${j.n}</b>
+      <p>${j.d}</p>
+      <div class="ligaBotones">
+        <button class="btn primario" data-jugar="1" ${quedan ? "" : "disabled"}>${quedan ? `▶ Jugar · quedan ${quedan}` : "Mañana más 💤"}</button>
+        ${miMejor ? `<button class="btn claro" data-retar="${clave}|${miMejor[1]}">⚔️ Retar con mi ${fmt(miMejor[1])}</button>` : ""}
+      </div>
+    </div>
+
+    ${paraMi.map((r) => `<button class="retoAviso" data-reto="${r.id}">⚔️ <b>${esc(nombre(r.de))}</b> te retó en ${JUEGOS[r.juego].n}: ${fmt(r.puntos_de)} · quedan ${horasRestan(r)} h <span>Aceptar →</span></button>`).join("")}
+
+    <div class="tabsLiga">
+      ${[["hoy", "Hoy"], ["semana", "Semana"], ["mes", "Mes"]].map(([k, t]) => `<button data-ligatab="${k}" class="${tab === k ? "on" : ""}">${t}</button>`).join("")}
+    </div>
+    <table class="tabla ligaTabla"><tbody>${tabla}</tbody></table>
+    ${tab !== "hoy" ? `<small class="sub">Cada día: 1º = 10 pts, 2º = 7, 3º = 5, 4º = 3 y los demás 2 o 1. 👑 = días ganados.</small>` : ""}
+
+    <div class="metaGrupo">
+      <div class="mesNav"><b>🤝 Meta del grupo esta semana</b>${st.esAdmin ? `<button class="btn chico" data-editarmeta="1">✏️</button>` : ""}</div>
+      <div class="metaBarra"><i style="width:${pct}%"></i><span>${est} / ${meta} ⭐</span></div>
+      <small>${est >= meta ? "🎉 ¡Meta cumplida! " : "Si entre todos llegan: "}${esc(ajuste("premio_liga") || "")}</small>
+      <small class="sub">Cada partida da de 1 a 3 ⭐ según qué tan bien te fue. El que no juega, le falla al grupo 😤</small>
+    </div>
+
+    ${misEnviados.length || cerrados.length ? `<div class="retosLista"><b>⚔️ Retos</b>
+      ${misEnviados.map((r) => `<div class="retoFila">⏳ Retaste a <b>${esc(nombre(r.para))}</b> en ${JUEGOS[r.juego].n} (${fmt(r.puntos_de)}) · le quedan ${horasRestan(r)} h</div>`).join("")}
+      ${cerrados.map((r) => {
+        const gana = r.estado === "ganado" ? r.para : r.de, pierde = r.estado === "ganado" ? r.de : r.para;
+        return r.estado === "gallina"
+          ? `<div class="retoFila">🐔 <b>${esc(nombre(r.para))}</b> no se atrevió con ${esc(nombre(r.de))}</div>`
+          : `<div class="retoFila">🏆 <b>${esc(nombre(gana))}</b> le ganó a ${esc(nombre(pierde))} · ${fmt(Math.max(r.puntos_de, r.puntos_para))} vs ${fmt(Math.min(r.puntos_de, r.puntos_para))}</div>`;
+      }).join("")}
+    </div>` : ""}
+    <small class="sub">Mañana toca: ${JUEGOS[ORDEN_JUEGOS[(ORDEN_JUEGOS.indexOf(clave) + 1) % ORDEN_JUEGOS.length]].n}</small>
   </section>`;
 }
 
-function abrirJuego() {
+async function editarMeta() {
+  const meta = prompt("¿Cuántas ⭐ tiene que juntar el grupo cada semana?", metaLiga());
+  if (meta === null) return;
+  const premio = prompt("¿Qué pasa si llegan a la meta?", ajuste("premio_liga"));
+  if (premio === null) return;
+  const { error: e } = await sb.from("ajustes").upsert([{ clave: "meta_liga", valor: String(Math.max(1, parseInt(meta) || 50)) }, { clave: "premio_liga", valor: premio.trim() }]);
+  if (e) return error(e);
+  toast("Meta actualizada 🤝");
+  cargarTodo();
+}
+
+function elegirRetado(juego, puntos) {
+  const otros = st.amigos.filter((a) => a.id !== st.yo && a.usuario);
+  const div = hoja(`<h3>⚔️ ¿A quién retas?</h3>
+    <p class="sub">Con tus ${fmt(puntos)} ${JUEGOS[juego].u} en ${JUEGOS[juego].n}. Tiene 24 h para superarte o queda como 🐔 en el chat.</p>
+    <div class="chips grandes">${otros.map((a) => `<button class="chip" data-a="${a.id}">${esc(a.nombre)}</button>`).join("")}</div>
+    <button class="btn ancho" id="cancelarReto" style="margin-top:14px">Cancelar</button>`);
+  $("#cancelarReto", div).onclick = cerrarHoja;
+  div.querySelectorAll("[data-a]").forEach((b) => (b.onclick = async () => {
+    b.disabled = true;
+    const { error: e } = await sb.from("liga_retos").insert({ de: st.yo, para: b.dataset.a, juego, puntos_de: puntos });
+    if (e) return error(e);
+    cerrarHoja();
+    toast(`⚔️ Reto enviado a ${nombre(b.dataset.a)}. ¡Que sufra! 😈`);
+    cargarTodo();
+  }));
+}
+
+// ---------- Motor de juegos ----------
+function abrirJuego(clave = juegoDeHoy(), reto = null) {
+  const j = JUEGOS[clave];
+  if (!reto && misIntentos() >= 3) return toast("Ya usaste tus 3 intentos de hoy. ¡Mañana más! 💪");
   const div = document.createElement("div");
-  div.className = "juego";
+  div.className = "juego j-" + clave;
   div.innerHTML = `
-    <div class="jCab"><b>🎾 Golpes: <span id="jPts">0</span></b><span>Récord: ${recordsJuego()[0]?.[1] || 0}</span><button id="jSalir">✕</button></div>
-    <canvas id="jCanvas"></canvas>
-    <div class="jInicio" id="jInicio"><h2>Pádel contra la pared</h2><p>Arrastra el dedo para mover la pala.<br>Cada golpe suma un punto y la pelota va cada vez más rápido. 🔥</p><button class="btn primario" id="jEmpezar">▶ Empezar</button></div>`;
+    <div class="jCab"><b>${j.n}</b><span id="jPts"></span><button id="jSalir">✕</button></div>
+    <div class="jZona" id="jZona"></div>
+    <div class="jInicio" id="jInicio">
+      <h2>${j.n}</h2>
+      ${reto ? `<p class="jReto">⚔️ Reto de <b>${esc(nombre(reto.de))}</b>: tienes que superar <b>${fmt(reto.puntos_de)}</b> ${j.u}</p>` : `<p class="jReto">Intento ${misIntentos() + 1} de 3</p>`}
+      <p>${j.d}</p>
+      <button class="btn primario" id="jEmpezar">▶ Empezar</button>
+    </div>`;
   document.body.appendChild(div);
   document.body.classList.add("bloqueado");
-  const cv = $("#jCanvas", div), ctx = cv.getContext("2d");
-  let W, H, pala, bola, pts, vivo = false, raf;
-  const ajustar = () => {
-    const r = window.devicePixelRatio || 1;
-    W = cv.clientWidth; H = cv.clientHeight;
-    cv.width = W * r; cv.height = H * r; ctx.setTransform(r, 0, 0, r, 0, 0);
+  let limpiar = () => {};
+  const cerrar = () => { limpiar(); div.remove(); document.body.classList.remove("bloqueado"); pintar(); };
+  $("#jSalir", div).onclick = cerrar;
+  const marcador = (t) => ($("#jPts", div).textContent = t);
+
+  const terminar = async (pts) => {
+    limpiar = () => {};
+    const ini = $("#jInicio", div);
+    const est = j.est(pts);
+    ini.hidden = false;
+    ini.innerHTML = `<h2>Guardando…</h2>`;
+    if (reto) {
+      const { data, error: e } = await sb.rpc("responder_reto", { p_reto: reto.id, p_puntos: pts });
+      if (e) { ini.innerHTML = `<h2>😬</h2><p>${esc(e.message)}</p><button class="btn primario" id="jCerrar">Cerrar</button>`; $("#jCerrar", div).onclick = cerrar; return; }
+      const gane = data === "ganado";
+      ini.innerHTML = `<h2>${gane ? "🏆 ¡Le ganaste a " + esc(nombre(reto.de)) + "!" : "😵 No alcanzó…"}</h2>
+        <p><b class="jGrande">${fmt(pts)}</b><br>vs ${fmt(reto.puntos_de)} de ${esc(nombre(reto.de))}</p>
+        <p>${gane ? "Ya salió en el chat 😎" : "Ya salió en el chat… 🙈"}</p>
+        <button class="btn primario" id="jCerrar">Cerrar</button>`;
+      $("#jCerrar", div).onclick = () => { cerrar(); cargarTodo(); };
+      return;
+    }
+    const { data, error: e } = await sb.from("liga_partidas").insert({ amigo_id: st.yo, juego: clave, puntos: pts, estrellas: est }).select();
+    if (e) { ini.innerHTML = `<h2>😬</h2><p>${esc(e.message)}</p><button class="btn primario" id="jCerrar">Cerrar</button>`; $("#jCerrar", div).onclick = cerrar; return; }
+    const antes = rankingDia(hoyISO());
+    const miAntes = antes.find(([id]) => id === st.yo)?.[1] ?? -1;
+    st.liga.push(data?.[0]?.amigo_id === st.yo ? data[0] : { amigo_id: st.yo, fecha: hoyISO(), juego: clave, puntos: pts, estrellas: est });
+    const rk = rankingDia(hoyISO());
+    const lugar = rk.findIndex(([id]) => id === st.yo) + 1;
+    const quedan = 3 - misIntentos();
+    const titulo = lugar === 1 && pts > miAntes ? "👑 ¡Vas en 1er lugar!" : pts > miAntes && miAntes >= 0 ? "🔥 ¡Mejoraste!" : lugar === 1 ? "👑 Sigues en 1er lugar" : `Vas en ${lugar}º lugar`;
+    ini.innerHTML = `<h2>${titulo}</h2>
+      <p><b class="jGrande">${fmt(pts)}</b><br>${j.u} · ${"⭐".repeat(est)}<span class="apagada">${"⭐".repeat(3 - est)}</span></p>
+      <p class="sub2">+${est} ⭐ para la meta del grupo (${estrellasSemana()}/${metaLiga()})</p>
+      <div class="jBotones">
+        ${quedan ? `<button class="btn primario" id="jOtra">↻ Otra vez (quedan ${quedan})</button>` : `<p>Ya usaste tus 3 intentos. ¡Mañana más! 💪</p>`}
+        <button class="btn claro" id="jRetar">⚔️ Retar a alguien con ${fmt(pts)}</button>
+        <button class="btn claro" id="jCerrar">Cerrar</button>
+      </div>`;
+    $("#jCerrar", div).onclick = cerrar;
+    $("#jRetar", div).onclick = () => { cerrar(); elegirRetado(clave, pts); };
+    if ($("#jOtra", div)) $("#jOtra", div).onclick = () => { ini.hidden = true; empezar(); };
   };
-  ajustar();
-  const reiniciar = () => {
-    pala = { x: W / 2, w: Math.max(80, W * 0.24), y: H - 60 };
-    bola = { x: W / 2, y: H * 0.3, vx: (Math.random() > 0.5 ? 1 : -1) * 2.6, vy: 3.2, r: 9 };
-    pts = 0; $("#jPts", div).textContent = 0;
+
+  const empezar = () => {
+    $("#jInicio", div).hidden = true;
+    const zona = $("#jZona", div);
+    zona.innerHTML = "";
+    limpiar = ({ pared: juegoPared, bola: juegoBola, trivia: juegoTrivia }[clave])(zona, marcador, terminar);
   };
+  $("#jEmpezar", div).onclick = empezar;
+}
+
+// 🎾 La Pared
+function juegoPared(zona, marcador, fin) {
+  zona.innerHTML = `<canvas class="jCanvas"></canvas>`;
+  const cv = zona.firstChild, ctx = cv.getContext("2d");
+  const r = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * r; cv.height = H * r; ctx.setTransform(r, 0, 0, r, 0, 0);
+  const pala = { x: W / 2, w: Math.max(80, W * 0.24), y: H - 60 };
+  const bola = { x: W / 2, y: H * 0.3, vx: (Math.random() > 0.5 ? 1 : -1) * 2.6, vy: 3.2, r: 9 };
+  let pts = 0, raf, vivo = true;
+  marcador("0 golpes");
   const mover = (x) => { pala.x = Math.max(pala.w / 2, Math.min(W - pala.w / 2, x)); };
   cv.addEventListener("touchmove", (e) => { e.preventDefault(); mover(e.touches[0].clientX - cv.getBoundingClientRect().left); }, { passive: false });
   cv.addEventListener("touchstart", (e) => mover(e.touches[0].clientX - cv.getBoundingClientRect().left), { passive: true });
   cv.addEventListener("mousemove", (e) => mover(e.clientX - cv.getBoundingClientRect().left));
-
   const dibujar = () => {
-    // pista
     ctx.fillStyle = "#1e5c8a"; ctx.fillRect(0, 0, W, H);
     ctx.strokeStyle = "rgba(255,255,255,.7)"; ctx.lineWidth = 2;
     ctx.strokeRect(10, 10, W - 20, H - 20);
     ctx.beginPath(); ctx.moveTo(10, H * 0.45); ctx.lineTo(W - 10, H * 0.45); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(W / 2, H * 0.45); ctx.lineTo(W / 2, H - 10); ctx.stroke();
-    // paredes de cristal
     ctx.fillStyle = "rgba(255,255,255,.12)"; ctx.fillRect(0, 0, W, 10); ctx.fillRect(0, 0, 10, H); ctx.fillRect(W - 10, 0, 10, H);
-    // pala
     ctx.fillStyle = "#141413"; ctx.beginPath(); ctx.roundRect(pala.x - pala.w / 2, pala.y, pala.w, 14, 7); ctx.fill();
     ctx.fillStyle = "#d97757"; ctx.beginPath(); ctx.roundRect(pala.x - pala.w / 2 + 4, pala.y + 3, pala.w - 8, 8, 4); ctx.fill();
-    // pelota
     ctx.fillStyle = "#d4f03a"; ctx.beginPath(); ctx.arc(bola.x, bola.y, bola.r, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(bola.x - 4, bola.y, bola.r - 2, -1, 1); ctx.stroke();
   };
   const paso = () => {
+    if (!vivo) return;
     bola.x += bola.vx; bola.y += bola.vy;
     if (bola.x < 10 + bola.r) { bola.x = 10 + bola.r; bola.vx *= -1; }
     if (bola.x > W - 10 - bola.r) { bola.x = W - 10 - bola.r; bola.vx *= -1; }
@@ -2380,40 +2595,132 @@ function abrirJuego() {
     if (bola.vy > 0 && bola.y + bola.r >= pala.y && bola.y + bola.r <= pala.y + 16 && Math.abs(bola.x - pala.x) <= pala.w / 2 + bola.r) {
       const off = (bola.x - pala.x) / (pala.w / 2);
       const v = Math.min(Math.hypot(bola.vx, bola.vy) * 1.06, 14);
-      const ang = off * 1.0;
-      bola.vx = v * Math.sin(ang); bola.vy = -Math.abs(v * Math.cos(ang));
+      bola.vx = v * Math.sin(off); bola.vy = -Math.abs(v * Math.cos(off));
       bola.y = pala.y - bola.r;
-      pts++; $("#jPts", div).textContent = pts;
+      pts++; marcador(`${pts} golpes`);
       pala.w = Math.max(56, pala.w - 1.5);
       if (navigator.vibrate) navigator.vibrate(10);
     }
-    if (bola.y > H + 30) return fin();
+    if (bola.y > H + 30) { vivo = false; return fin(pts); }
     dibujar();
     raf = requestAnimationFrame(paso);
   };
-  const fin = async () => {
-    vivo = false;
-    cancelAnimationFrame(raf);
-    const record = recordsJuego()[0]?.[1] || 0;
-    const miRecord = recordsJuego().find(([id]) => id === st.yo)?.[1] || 0;
-    let msg = pts > record && pts > 0 ? "🏆 ¡NUEVO RÉCORD DEL GRUPO!" : pts > miRecord && pts > 0 ? "🔥 ¡Superaste tu récord!" : "¡Se te cayó! 😅";
-    $("#jInicio", div).innerHTML = `<h2>${msg}</h2><p><b style="font-size:2.4rem">${pts}</b><br>golpes</p><button class="btn primario" id="jEmpezar">↻ Otra vez</button>`;
-    $("#jInicio", div).hidden = false;
-    $("#jEmpezar", div).onclick = empezar;
-    if (pts > 0 && st.yo) {
-      const { data } = await sb.from("puntuaciones").insert({ amigo_id: st.yo, puntos: pts, juego: "pong" }).select();
-      if (data?.[0]) st.puntuaciones.push(data[0]);
-      if (pts > record && record > 0) enviarChatSilencioso(`🎮 ¡Nuevo récord en Pádel contra la pared: ${pts} golpes! ¿Quién me gana? 😎`);
-    }
-  };
-  const empezar = () => {
-    reiniciar(); $("#jInicio", div).hidden = true; vivo = true; dibujar();
-    setTimeout(() => { if (vivo) raf = requestAnimationFrame(paso); }, 400);
-  };
-  reiniciar(); dibujar();
-  $("#jEmpezar", div).onclick = empezar;
-  $("#jSalir", div).onclick = () => { vivo = false; cancelAnimationFrame(raf); div.remove(); document.body.classList.remove("bloqueado"); if (st.tab === "ranking") pintar(); };
+  dibujar();
+  const t = setTimeout(() => (raf = requestAnimationFrame(paso)), 500);
+  return () => { vivo = false; clearTimeout(t); cancelAnimationFrame(raf); };
 }
+
+// ⚡ ¡Bola! — reflejos
+function juegoBola(zona, marcador, fin) {
+  zona.innerHTML = `<div class="bolaPista"><div class="bolaMsg"></div><div class="bolaPelota" hidden></div></div>`;
+  const pista = zona.firstChild, msg = $(".bolaMsg", pista), pelota = $(".bolaPelota", pista);
+  const RONDAS = 5;
+  let ronda = 0, total = 0, estado = "espera", t0 = 0, timers = [], vivo = true;
+  const later = (fn, ms) => timers.push(setTimeout(() => vivo && fn(), ms));
+  const siguiente = () => {
+    if (ronda >= RONDAS) { vivo = false; return fin(total); }
+    ronda++;
+    estado = "espera";
+    pelota.hidden = true;
+    pista.className = "bolaPista";
+    msg.innerHTML = `<small>Ronda ${ronda} de ${RONDAS}</small><b>Espera…</b>`;
+    marcador(`${fmt(total)} pts`);
+    later(() => {
+      estado = "visible";
+      msg.innerHTML = "";
+      const w = pista.clientWidth, h = pista.clientHeight;
+      pelota.style.left = 40 + Math.random() * (w - 120) + "px";
+      pelota.style.top = 40 + Math.random() * (h - 160) + "px";
+      pelota.hidden = false;
+      t0 = performance.now();
+      later(() => { if (estado === "visible") resultado(null); }, 1500);
+    }, 1000 + Math.random() * 2600);
+  };
+  const resultado = (ms) => {
+    estado = "pausa";
+    pelota.hidden = true;
+    const p = ms === null ? 0 : Math.max(0, Math.round(1000 - ms));
+    total += p;
+    marcador(`${fmt(total)} pts`);
+    pista.className = "bolaPista " + (ms === null ? "mal" : "bien");
+    msg.innerHTML = ms === null ? `<b>¡Muy lento! 🐢</b><small>+0</small>` : `<b>${Math.round(ms)} ms</b><small>+${p} pts ${ms < 300 ? "🔥" : ms < 400 ? "⚡" : ""}</small>`;
+    later(siguiente, 1100);
+  };
+  pista.addEventListener("pointerdown", (e) => {
+    if (estado === "espera") {
+      timers.forEach(clearTimeout); timers = [];
+      estado = "pausa";
+      pista.className = "bolaPista mal";
+      msg.innerHTML = `<b>¡Muy pronto! 😅</b><small>Ronda perdida</small>`;
+      later(siguiente, 1100);
+    } else if (estado === "visible" && e.target === pelota) {
+      if (navigator.vibrate) navigator.vibrate(15);
+      resultado(performance.now() - t0);
+    }
+  });
+  siguiente();
+  return () => { vivo = false; timers.forEach(clearTimeout); };
+}
+
+// 🧠 Trivia
+function juegoTrivia(zona, marcador, fin) {
+  const banco = [...st.trivia];
+  const preguntas = [];
+  // una del grupo, si hay cumpleaños registrados
+  const conCumple = st.amigos.filter((a) => a.cumple_mes);
+  if (conCumple.length >= 2 && Math.random() < 0.7) {
+    const a = conCumple[Math.floor(Math.random() * conCumple.length)];
+    const ops = new Set([a.cumple_mes - 1]);
+    while (ops.size < 4) ops.add(Math.floor(Math.random() * 12));
+    const lista = [...ops].sort(() => Math.random() - 0.5);
+    preguntas.push({ pregunta: `¿En qué mes cumple años ${a.nombre}? 🎂`, opciones: lista.map((m) => MESES[m][0].toUpperCase() + MESES[m].slice(1)), correcta: lista.indexOf(a.cumple_mes - 1) });
+  }
+  while (preguntas.length < 5 && banco.length) preguntas.push(banco.splice(Math.floor(Math.random() * banco.length), 1)[0]);
+  preguntas.sort(() => Math.random() - 0.5);
+  let i = 0, total = 0, timer, vivo = true, t0;
+  const SEG = 10;
+  const mostrar = () => {
+    if (i >= preguntas.length) { vivo = false; return fin(total); }
+    const q = preguntas[i];
+    marcador(`${fmt(total)} pts`);
+    zona.innerHTML = `<div class="trivia">
+      <small>Pregunta ${i + 1} de ${preguntas.length}</small>
+      <div class="tReloj"><i></i></div>
+      <h3>${esc(q.pregunta)}</h3>
+      <div class="tOps">${q.opciones.map((o, k) => `<button data-k="${k}">${esc(o)}</button>`).join("")}</div>
+    </div>`;
+    const barra = $(".tReloj i", zona);
+    requestAnimationFrame(() => { barra.style.transition = `width ${SEG}s linear`; barra.style.width = "0%"; });
+    t0 = performance.now();
+    timer = setTimeout(() => vivo && responder(-1), SEG * 1000);
+    zona.querySelectorAll("[data-k]").forEach((b) => (b.onclick = () => responder(Number(b.dataset.k))));
+  };
+  const responder = (k) => {
+    clearTimeout(timer);
+    const q = preguntas[i];
+    const resta = Math.max(0, SEG - (performance.now() - t0) / 1000);
+    const bien = k === q.correcta;
+    const p = bien ? 100 + Math.round(resta * 10) : 0;
+    total += p;
+    zona.querySelectorAll("[data-k]").forEach((b) => {
+      b.disabled = true;
+      if (Number(b.dataset.k) === q.correcta) b.classList.add("ok");
+      else if (Number(b.dataset.k) === k) b.classList.add("no");
+    });
+    $(".tReloj i", zona).style.transition = "none";
+    marcador(`${fmt(total)} pts`);
+    if (bien && navigator.vibrate) navigator.vibrate(15);
+    const aviso = document.createElement("p");
+    aviso.className = "tAviso";
+    aviso.textContent = bien ? `✅ +${p}` : k === -1 ? "⏰ ¡Se acabó el tiempo!" : "❌ Nop";
+    $(".trivia", zona).appendChild(aviso);
+    i++;
+    timer = setTimeout(() => vivo && mostrar(), 1300);
+  };
+  mostrar();
+  return () => { vivo = false; clearTimeout(timer); };
+}
+
 async function enviarChatSilencioso(texto) {
   try { await sb.from("mensajes").insert({ autor: st.yo, texto }); } catch {}
 }
@@ -2424,9 +2731,9 @@ function vistaPadel() {
   return `
     ${tarjetaProximoPadel()}
     ${st.extras ? bloquePremio() : ""}
+    ${seccionLiga()}
     ${vistaRanking()}
     ${seccionCromos()}
-    ${seccionJuego()}
     ${recientes.length ? `<section class="tarjeta"><h3>📸 Fotos de los partidos</h3>
       ${recientes.map((p) => `<div class="filaAlbum"><span>🎾 ${fechaLarga(p.fecha)}</span>${filaFotosPartido(p)}</div>`).join("")}
     </section>` : ""}`;
