@@ -659,22 +659,6 @@ function vistaInicio() {
   const hace3 = iso(new Date(Date.now() - 3 * 864e5));
   const pendienteVoto = st.extras && st.yo ? diasDePadel().filter((f) => f >= hace3).find((f) => !mejorDelDia(f).mio) : null;
   return `
-    ${pendienteVoto ? `<button class="bannerVoto" data-mvp="${pendienteVoto}">⭐ <b>Vota al mejor jugador ${pendienteVoto === hoy ? "de hoy" : "de " + fechaLarga(pendienteVoto).toLowerCase()}</b><span>Votar →</span></button>` : ""}
-    ${hayResumen ? `<button class="bannerResumen" data-resumen="${anioResumen}">✨ <b>Ya está el Resumen ${anioResumen}</b><span>Toca para verlo →</span></button>` : ""}
-    <section class="portada ${portada ? "conImagen" : ""}" ${portada ? `style="background-image:url('${esc(portada)}')"` : ""}>
-      <div class="portadaTexto">
-        <h2>${esc(ini?.titulo || "¡Bienvenidos, Pendejos!")}</h2>
-        ${ini?.mensaje ? `<p>${esc(ini.mensaje).replace(/\n/g, "<br>")}</p>` : ""}
-      </div>
-      ${st.esAdmin ? `<button class="btn chico" id="editarPortada">✏️ Editar</button>` : ""}
-    </section>
-
-    ${C.grupoWhatsApp ? `<a class="btn wa ancho irGrupo" href="${esc(C.grupoWhatsApp)}" target="_blank" rel="noopener">💬 Ir al grupo de WhatsApp</a>` : ""}
-    ${tarjetaProximoPadel()}
-    ${tarjetaLiga()}
-    ${tarjetaNavidad()}
-    <div class="fraseDia"><small>✨ FRASE DEL DÍA</small><p>${esc(fraseDelDia())}</p></div>
-    ${tarjetaPregunta()}
     <div class="widgets">
       <button class="widget" data-tab-ir="calendario" ${prox ? `data-fecha="${prox.fecha}"` : ""}>
         <small>Próximo plan</small>
@@ -692,6 +676,22 @@ function vistaInicio() {
         <span>${lider ? `🏆 ${lider.g} victoria${lider.g === 1 ? "" : "s"}` : "Sin resultados aún"}</span>
       </button>
     </div>
+    ${pendienteVoto ? `<button class="bannerVoto" data-mvp="${pendienteVoto}"><i class="estrella">⭐</i> <b>Vota al mejor jugador ${pendienteVoto === hoy ? "de hoy" : "de " + fechaLarga(pendienteVoto).toLowerCase()}</b><span>Votar →</span></button>` : ""}
+    ${hayResumen ? `<button class="bannerResumen" data-resumen="${anioResumen}">✨ <b>Ya está el Resumen ${anioResumen}</b><span>Toca para verlo →</span></button>` : ""}
+    <section class="portada ${portada ? "conImagen" : ""}" ${portada ? `style="background-image:url('${esc(portada)}')"` : ""}>
+      <div class="portadaTexto">
+        <h2>${esc(ini?.titulo || "¡Bienvenidos, Pendejos!")}</h2>
+        ${ini?.mensaje ? `<p>${esc(ini.mensaje).replace(/\n/g, "<br>")}</p>` : ""}
+      </div>
+      ${st.esAdmin ? `<button class="btn chico" id="editarPortada">✏️ Editar</button>` : ""}
+    </section>
+
+    ${C.grupoWhatsApp ? `<a class="btn wa ancho irGrupo" href="${esc(C.grupoWhatsApp)}" target="_blank" rel="noopener">💬 Ir al grupo de WhatsApp</a>` : ""}
+    ${tarjetaProximoPadel()}
+    ${tarjetaLiga()}
+    ${tarjetaNavidad()}
+    <div class="fraseDia"><small>✨ FRASE DEL DÍA</small><p>${esc(fraseDelDia())}</p></div>
+    ${tarjetaPregunta()}
 
     <section class="tarjeta">
       <div class="mesNav">
